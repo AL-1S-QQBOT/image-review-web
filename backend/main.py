@@ -1144,6 +1144,29 @@ async def admin_health(x_admin_password: str = Header(None)):
 
 
 
+@app.post("/api/admin/backup/now")
+async def admin_backup_now(x_admin_password: str = Header(None)):
+    """立即执行备份"""
+    verify_admin(x_admin_password)
+    from backend.backup import create_backup, cleanup_old_backups
+    from backend.services import get_backup_retention_days
+
+    try:
+        backup_path = create_backup()
+    except Exception as exc:
+        reason = f"创建备份时发生异常: {exc}"
+        log_message(f"管理员手动触发备份失败: {reason}")
+        return {"success": False, "message": "备份失败", "reason": str(exc)}
+
+    if backup_path:
+        cleanup_old_backups(get_backup_retention_days())
+        log_message("管理员手动触发备份成功")
+        return {"success": True, "message": "备份成功", "path": backup_path}
+
+    reason = "备份失败：create_backup() 未返回有效的备份路径"
+    log_message(f"管理员手动触发备份失败: {reason}")
+    return {"success": False, "message": "备份失败", "reason": reason}
+
 
 @app.get("/api/admin/backup/list")
 async def admin_list_backups(x_admin_password: str = Header(None)):

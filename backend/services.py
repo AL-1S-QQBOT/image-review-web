@@ -19,24 +19,30 @@ REVIEW_STATUS_FAIL = 'fail'
 REVIEW_STATUS_SKIP = 'skip'
 
 
-def compute_weighted_result(rows, required_weight=None, default_weight=0.5):
+def compute_weighted_result(rows, required_weight=None, default_weight=0.5, min_voters=None):
     """
     计算加权审核结果。
 
     rows: [(user_id, status, credibility_score), ...]
     required_weight: 所需最小总权重，默认 REQUIRED_WEIGHT
     default_weight: credibility_score 为 None 时的默认值
+    min_voters: 至少需要多少投票人（仅在可信度计算中使用，用于排除单张图片只有1票的情况）
     返回 'pass'/'fail'/None（权重不足时返回 None）
     """
     if required_weight is None:
         required_weight = REQUIRED_WEIGHT
 
-    total_weight = sum((r[2] if r[2] is not None else default_weight) for r in rows)
-    if total_weight < required_weight:
+    unique_voters = len(set(r[0] for r in rows))
+    if min_voters is not None and unique_voters < min_voters:
         return None
 
     w_pass = sum((r[2] if r[2] is not None else default_weight) for r in rows if r[1] == REVIEW_STATUS_PASS)
     w_fail = sum((r[2] if r[2] is not None else default_weight) for r in rows if r[1] == REVIEW_STATUS_FAIL)
+
+    total_weight = w_pass + w_fail
+    if total_weight < required_weight:
+        return None
+
     return REVIEW_STATUS_PASS if w_pass >= w_fail else REVIEW_STATUS_FAIL
 
 
@@ -502,43 +508,54 @@ def submit_review(image_id: int, user_id: str, status: str):
     )
     conn.commit()
 
-    # 检查累计可信度是否达到阈值
+    # 批量查询：一次性获取该用户参与的所有图片的全部投票
+    # 注意：每次投票都重新检查所有历史图片以确保准确性（其他用户的后续投票
+    # 可能改变之前的共识），这是一种权衡——用更多计算换取可信度实时精确。
+    # 若用户投票历史极大（数万条），可考虑限制到最近 N 张图片或增量缓存。
     cursor.execute('''
-        SELECT r.user_id, r.status, u.credibility_score
+        SELECT r.image_id, r.user_id, r.status, COALESCE(u.credibility_score, 0.5)
         FROM reviews r
         JOIN users u ON r.user_id = u.id
-        WHERE r.image_id = ? AND r.status IN ('pass', 'fail')
-    ''', (image_id,))
-    vote_data_raw = cursor.fetchall()
-    total_weight = sum((row[2] or 0.5) for row in vote_data_raw)
+        WHERE r.image_id IN (
+            SELECT DISTINCT r2.image_id
+            FROM reviews r2
+            WHERE r2.user_id = ? AND r2.status IN ('pass', 'fail')
+        )
+        AND r.status IN ('pass', 'fail')
+        ORDER BY r.image_id
+    ''', (user_id,))
+    all_rows = cursor.fetchall()
+    
+    # 按 image_id 分组为 dict[image_id] -> [(user_id, status, credibility)]
+    groups: dict[int, list] = {}
+    for row in all_rows:
+        gid = row[0]
+        if gid not in groups:
+            groups[gid] = []
+        groups[gid].append((row[1], row[2], row[3]))
 
-    if total_weight >= REQUIRED_WEIGHT:
-        # 可信度加权投票判定
-        vote_data = []
-        weighted_pass = 0.0
-        weighted_fail = 0.0
-        for uid, vote, cred in vote_data_raw:
-            cred = cred or 0.5
-            vote_data.append((uid, vote, cred))
-            if vote == 'pass':
-                weighted_pass += cred
-            else:
-                weighted_fail += cred
+    total = 0
+    agrees = 0
+    for gid, group in groups.items():
+        # 只有 ≥2 人投票的图片才计入可信度（排除自证合理）
+        result = compute_weighted_result(group, min_voters=2)
+        if result is None:
+            continue
+        total += 1
+        user_vote = next((r[1] for r in group if r[0] == user_id), None)
+        if user_vote == result:
+            agrees += 1
 
-        final_result = 'pass' if weighted_pass >= weighted_fail else 'fail'
-
-        for uid, vote, cred in vote_data:
-            agrees = 1 if vote == final_result else 0
-            cursor.execute('''
-                UPDATE users SET
-                    credibility_agrees = credibility_agrees + ?,
-                    credibility_total = credibility_total + 1,
-                    credibility_score = CAST(credibility_agrees + ? + 1 AS REAL) / (credibility_total + 1 + 2)
-                WHERE id = ?
-            ''', (agrees, agrees, uid))
+    if total > 0:
+        new_score = (agrees + 1) / (total + 2)
+        cursor.execute(
+            "UPDATE users SET credibility_agrees = ?, credibility_total = ?, credibility_score = ? WHERE id = ?",
+            (agrees, total, new_score, user_id)
+        )
 
     conn.commit()
     conn.close()
+
 
 def get_user_credibility(user_id: str) -> dict:
     """获取单个用户可信度"""
@@ -743,14 +760,6 @@ def get_image_final_status(image_id: int) -> Optional[str]:
 
 
 
-
-def _calculate_final_status(votes):
-    """Helper: 简单多数决（旧版兼容）"""
-    if len(votes) < REQUIRED_VOTES:
-        return None
-    pass_count = votes.count(REVIEW_STATUS_PASS)
-    fail_count = votes.count(REVIEW_STATUS_FAIL)
-    return 'pass' if pass_count >= fail_count else 'fail'
 
 
 def get_image_final_statuses_batch(image_ids):
