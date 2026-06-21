@@ -760,7 +760,6 @@ async function loadStats() {
         document.getElementById('totalVotes').textContent = stats.total_votes || 0;
         document.getElementById('totalCompleted').textContent = stats.completed_images;
         document.getElementById('totalPass').textContent = stats.pass_count || 0;
-        document.getElementById('totalDisputed').textContent = stats.disputed_count || 0;
         document.getElementById('totalFail').textContent = stats.fail_count || 0;
         
         // 角色统计
@@ -784,12 +783,56 @@ async function loadStats() {
                         <span class="text-pass">通过: ${item.stats.pass_count}</span>
                         <span class="text-fail">不通过: ${item.stats.fail_count}</span>
                     </div>
+                    <button class="btn btn-small" onclick="showRoleImages(${item.role.id},\'${escapeHtml(item.role.name)}\')" style="margin-top:8px;">查看详情</button>
                 </div>
             `).join('');
         }
     } catch (e) {
         console.error('加载统计失败:', e);
     }
+}
+
+// ========== 角色图片详情 ==========
+async function showRoleImages(roleId, roleName) {
+    document.getElementById('roleImagesTitle').textContent = roleName + ' - 图片审核状态';
+    document.getElementById('roleImagesPanel').style.display = 'block';
+    document.getElementById('roleImagesList').innerHTML = '<p style="padding:20px;color:var(--text-muted);text-align:center;">加载中...</p>';
+    try {
+        const response = await adminFetch('/api/admin/role-images/' + roleId);
+        const data = await response.json();
+        renderRoleImages(data.images);
+    } catch (e) {
+        document.getElementById('roleImagesList').innerHTML = '<p style="padding:20px;color:var(--accent-red);text-align:center;">加载失败</p>';
+    }
+}
+function closeRoleImages() {
+    document.getElementById('roleImagesPanel').style.display = 'none';
+}
+function renderRoleImages(images) {
+    var container = document.getElementById('roleImagesList');
+    if (!images || images.length === 0) {
+        container.innerHTML = '<p style="padding:30px;color:var(--text-muted);text-align:center;">暂无图片</p>';
+        return;
+    }
+    container.innerHTML = images.map(function(img) {
+        var statusBadge, badgeClass;
+        if (img.status === 'completed') {
+            statusBadge = img.resolution === 'pass' ? '已通过' : '未通过';
+            badgeClass = 'badge badge-' + (img.resolution === 'pass' ? 'pass' : 'fail');
+        } else {
+            statusBadge = '审核中 ' + img.total_weight.toFixed(1) + '/4.0';
+            badgeClass = 'badge badge-pending';
+        }
+        var votersHtml = img.voters.map(function(v) {
+            var vicon = v.vote === 'pass' ? '\u2714' : v.vote === 'fail' ? '\u2718' : '\u2014';
+            var vcls = 'voter ' + (v.vote === 'pass' ? 'v-pass' : v.vote === 'fail' ? 'v-fail' : 'v-skip');
+            var uid = v.user_id ? v.user_id.substring(0, 8) : '';
+            return '<div class="' + vcls + '"><span class="v-icon">' + vicon + '</span><span class="v-name">' + escapeHtml(v.nickname) + '</span><span class="v-uid">#' + escapeHtml(uid) + '</span><span class="v-cred">' + (v.cred * 100).toFixed(0) + '%</span></div>';
+        }).join('');
+        var imgId = img.id;
+        var failSvg = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 260 150"><rect fill="#1a1a2e" width="260" height="150"/><text x="130" y="75" text-anchor="middle" fill="#555" font-size="13">\u65e0\u56fe</text></svg>');
+        return '<div class="rimg-card"><div class="rimg-img"><img src="/api/image/' + imgId + '/thumbnail?t=' + imgId + '" loading="lazy" onerror="this.src=\'' + failSvg + '\'"></div><div class="rimg-body"><div class="rimg-hdr"><span class="rimg-id">#' + imgId + '</span><span class="' + badgeClass + '">' + statusBadge + '</span></div><div class="rimg-bar"><div class="rimg-bar-fill rimg-bar-pass" style="flex:' + Math.max(img.w_pass, 0.01) + '"></div><div class="rimg-bar-fill rimg-bar-fail" style="flex:' + Math.max(img.w_fail, 0.01) + '"></div></div><div class="rimg-weights"><span class="w-pass">\u2705 ' + img.w_pass.toFixed(1) + '</span><span class="w-fail">\u274c ' + img.w_fail.toFixed(1) + '</span></div><div class="rimg-voters">' + votersHtml + '</div></div></div>';
+    }).join('');
 }
 
 // ========== 导出功能 ==========
@@ -835,45 +878,6 @@ async function exportApproved() {
 }
 
 // ========== 争议图片导出 ==========
-async function exportDisputed() {
-    if (!confirm('确定要导出所有有争议的图片吗？\n争议定义：3人投票意见不一致\n图片将按角色分文件夹打包。')) return;
-    
-    const btn = event.target;
-    btn.textContent = '导出中...';
-    btn.disabled = true;
-    
-    try {
-        const response = await adminFetch('/api/admin/export-disputed', {
-            method: 'GET'
-        });
-        
-        const contentType = response.headers.get('content-type') || '';
-        
-        if (contentType.includes('application/json')) {
-            const data = await response.json();
-            alert(data.message || '暂无可导出图片');
-        } else if (contentType.includes('application/zip') || contentType.includes('application/octet-stream')) {
-            const blob = await response.blob();
-            const url = window.URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = '争议图片.zip';
-            document.body.appendChild(a);
-            a.click();
-            window.URL.revokeObjectURL(url);
-            document.body.removeChild(a);
-        } else {
-            alert('导出失败，未知响应格式');
-        }
-    } catch (e) {
-        console.error('导出失败:', e);
-        alert('导出失败: ' + e.message);
-    } finally {
-        btn.textContent = '导出争议图片';
-        btn.disabled = false;
-    }
-}
-
 // ========== 工具函数 ==========
 function escapeHtml(text) {
     const div = document.createElement('div');

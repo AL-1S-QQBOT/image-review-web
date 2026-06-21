@@ -116,7 +116,6 @@
                     <h3>总体审核状况</h3>
                     <div class="btn-group">
                         <button class="btn btn-outline" onclick="exportApproved()">导出通过</button>
-                        <button class="btn btn-outline" onclick="exportDisputed()">导出争议</button>
                     </div>
                 </div>
                 <div class="stats-overview">
@@ -144,10 +143,7 @@
                             <div class="stat-value" id="totalPass">0</div>
                             <div class="stat-label">通过</div>
                         </div>
-                        <div class="stat-card stat-disputed">
-                            <div class="stat-value" id="totalDisputed">0</div>
-                            <div class="stat-label">有争议</div>
-                        </div>
+
                         <div class="stat-card stat-fail">
                             <div class="stat-value" id="totalFail">0</div>
                             <div class="stat-label">不通过</div>
@@ -160,6 +156,13 @@
                     <h3>各角色审核状况</h3>
                 </div>
                 <div id="roleStatsList" class="admin-list"></div>
+            </div>
+            <div id="roleImagesPanel" class="panel" style="display:none">
+                <div class="panel-header">
+                    <h3><span id="roleImagesTitle"></span></h3>
+                    <button class="btn btn-outline" onclick="closeRoleImages()">关闭</button>
+                </div>
+                <div id="roleImagesList" class="role-images-grid"></div>
             </div>
         </div>
 
