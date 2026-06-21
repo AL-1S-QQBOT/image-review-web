@@ -199,13 +199,48 @@ def verify_admin(x_admin_password: str = Header(None)):
 
 # ============ 前台API ============
 
+def _make_token_response(user):
+    """创建带 httponly token cookie 的响应"""
+    from fastapi.responses import JSONResponse
+    secure = os.getenv("REVIEW_COOKIE_SECURE", "0") == "1"
+    resp = JSONResponse(content=user.model_dump())
+    if user.user_token:
+        resp.set_cookie(
+            key="review_user_token",
+            value=user.user_token,
+            max_age=365*24*60*60,
+            path="/",
+            httponly=True,
+            samesite="lax",
+            secure=secure,
+        )
+    return resp
+
+
 @app.get("/api/user/init")
 async def init_user():
-    """初始化用户，返回用户ID"""
+    """初始化用户，返回用户ID并设置Cookie"""
     user_id = str(uuid.uuid4())
     user = create_or_get_user(user_id)
     log_message(f"新用户创建: {user_id}")
-    return user
+    return _make_token_response(user)
+
+@app.get("/api/user/me")
+async def get_user_by_token(x_user_token: str = Header(None)):
+    """通过令牌获取用户信息（安全方式，刷新Cookie）"""
+    if not x_user_token:
+        raise HTTPException(status_code=400, detail="缺少令牌")
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id FROM users WHERE user_token = ?", (x_user_token,))
+    row = cursor.fetchone()
+    conn.close()
+    if not row:
+        raise HTTPException(status_code=404, detail="令牌无效")
+    update_user_activity(row[0])
+    user = create_or_get_user(row[0])
+    return _make_token_response(user)
+
 
 @app.get("/api/user/{user_id}")
 async def get_user(user_id: str):

@@ -314,28 +314,69 @@ window.addEventListener('DOMContentLoaded', async function() {
     }
 });
 
-// ========== 用户初始化 ==========
+// ========== Cookie 工具函数（仅读取）==========
+function getCookie(name) {
+    var match = document.cookie.match(new RegExp('(^| )' + name + '=([^;]+)'));
+    return match ? decodeURIComponent(match[2]) : null;
+}
+
+// ========== 用户初始化（Cookie 安全模式，由后端设置Cookie）==========
 async function initUser() {
     try {
-        // 尝试从localStorage获取用户ID
-        let userId = localStorage.getItem('review_user_id');
+        // 1. 优先从 Cookie 获取令牌
+        var token = getCookie('review_user_token');
         
-        let response;
-        if (!userId) {
-            // 创建新用户
+        if (!token) {
+            // 2. 尝试从 localStorage 迁移旧 token
+            var oldToken = localStorage.getItem('review_user_token');
+            if (oldToken) {
+                try {
+                    var resp = await fetch('/api/user/me', {
+                        headers: { 'X-User-Token': oldToken }
+                    });
+                    if (resp.ok) {
+                        token = oldToken;
+                    }
+                } catch (e) {}
+            }
+            // 3. 尝试从 localStorage 迁移旧 user_id
+            if (!token) {
+                var oldUserId = localStorage.getItem('review_user_id');
+                if (oldUserId) {
+                    try {
+                        var resp = await fetch('/api/user/' + oldUserId);
+                        if (resp.ok) {
+                            var userData = await resp.json();
+                            token = userData.user_token;
+                        }
+                    } catch (e) {}
+                }
+            }
+        }
+        
+        var response;
+        if (!token) {
+            // 4. 创建新用户（后端会设置 Cookie）
             response = await fetch('/api/user/init');
             if (!response.ok) throw new Error('创建用户失败');
             currentUser = await response.json();
-            localStorage.setItem('review_user_id', currentUser.id);
+            // 清理旧 localStorage 数据
+            localStorage.removeItem('review_user_id');
+            localStorage.removeItem('review_user_token');
         } else {
-            // 获取现有用户
-            response = await fetch(`/api/user/${userId}`);
+            // 5. 通过令牌获取用户（后端会刷新 Cookie）
+            response = await fetch('/api/user/me', {
+                headers: { 'X-User-Token': token }
+            });
             if (!response.ok) {
-                localStorage.removeItem('review_user_id');
+                document.cookie = 'review_user_token=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;';
                 await initUser();
                 return;
             }
             currentUser = await response.json();
+            // 清理旧 localStorage
+            localStorage.removeItem('review_user_id');
+            localStorage.removeItem('review_user_token');
         }
         
         updateUserUI();
