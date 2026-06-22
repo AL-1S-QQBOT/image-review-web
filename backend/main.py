@@ -236,7 +236,7 @@ async def get_user_by_token(
         raise HTTPException(status_code=400, detail="缺少令牌")
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute("SELECT id FROM users WHERE user_token = ?", (x_user_token,))
+    cursor.execute("SELECT id FROM users WHERE user_token = ?", (token,))
     row = cursor.fetchone()
     conn.close()
     if not row:
@@ -522,6 +522,63 @@ async def get_review_rule_api():
     """获取审核规则"""
     return {"content": get_setting("review_rule") or ""}
 
+
+# ============ 管理后台设置接口（需管理员密码）============
+@app.get("/api/admin/settings")
+async def admin_get_settings(x_admin_password: str = Header(None)):
+    """管理员获取所有设置"""
+    verify_admin(x_admin_password)
+    return get_settings()
+
+
+@app.put("/api/admin/settings/title")
+async def admin_set_title(x_admin_password: str = Header(None), title: str = Form(...)):
+    verify_admin(x_admin_password)
+    save_setting("title", title)
+    return {"success": True}
+
+
+@app.put("/api/admin/settings/icon")
+async def admin_set_icon(x_admin_password: str = Header(None), icon: str = Form(...)):
+    verify_admin(x_admin_password)
+    save_setting("icon", icon)
+    return {"success": True}
+
+
+@app.put("/api/admin/settings/notice")
+async def admin_set_notice(x_admin_password: str = Header(None), content: str = Form(...)):
+    verify_admin(x_admin_password)
+    save_setting("notice", content)
+    return {"success": True}
+
+
+@app.put("/api/admin/settings/review-rule")
+async def admin_set_review_rule(x_admin_password: str = Header(None), content: str = Form(...)):
+    verify_admin(x_admin_password)
+    save_setting("review_rule", content)
+    return {"success": True}
+
+
+@app.put("/api/admin/settings/auto-backup-enabled")
+async def admin_set_auto_backup_enabled(x_admin_password: str = Header(None), enabled: str = Form(...)):
+    verify_admin(x_admin_password)
+    save_setting("auto_backup_enabled", enabled)
+    return {"success": True}
+
+
+@app.put("/api/admin/settings/auto-backup-time")
+async def admin_set_auto_backup_time(x_admin_password: str = Header(None), backup_time: str = Form(...)):
+    verify_admin(x_admin_password)
+    save_setting("auto_backup_time", backup_time)
+    return {"success": True}
+
+
+@app.put("/api/admin/settings/backup-retention-days")
+async def admin_set_backup_retention_days(x_admin_password: str = Header(None), days: str = Form(...)):
+    verify_admin(x_admin_password)
+    save_setting("backup_retention_days", days)
+    return {"success": True}
+
 @app.get("/api/image/next-id")
 async def get_next_id(user_id: str, current_id: int, role_id: Optional[int] = None):
     """获取下一张待审核图片ID（随机排序，用于预加载）
@@ -720,7 +777,8 @@ async def admin_recalc_credibility(x_admin_password: str = Header(None)):
     """全量重新计算所有用户可信度"""
     verify_admin(x_admin_password)
     from backend.database import update_all_credibility
-    update_all_credibility()
+    from backend.services import REQUIRED_WEIGHT
+    update_all_credibility(required_weight=REQUIRED_WEIGHT)
     return {"success": True, "message": "可信度已重新计算"}
 
 

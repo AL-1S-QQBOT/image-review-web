@@ -43,6 +43,8 @@ def compute_weighted_result(rows, required_weight=None, default_weight=DEFAULT_C
     total_weight = w_pass + w_fail
     if total_weight < required_weight:
         return None
+    if w_pass == 0 and w_fail == 0:
+        return None
 
     return REVIEW_STATUS_PASS if w_pass >= w_fail else REVIEW_STATUS_FAIL
 
@@ -431,7 +433,7 @@ def get_image_for_review(user_id: str, role_id: Optional[int] = None) -> Optiona
     row = cursor.fetchone()
     
     if row:
-        # 统计审核情况
+        # 统计审核情况（排除skip，只计pass/fail）
         cursor.execute('''
             SELECT status, COUNT(*) as count FROM reviews
             WHERE image_id = ? AND status != ?
@@ -681,7 +683,7 @@ def get_overall_stats() -> StatsResponse:
     completed_pass = stats['completed_pass'] or 0
     completed_fail = stats['completed_fail'] or 0
     completed_disputed = 0
-    progress_percent = (total_reviews / (total_images * REQUIRED_VOTES) * 100) if total_images > 0 else 0
+    progress_percent = (completed_images / total_images * 100) if total_images > 0 else 0
     
     return StatsResponse(
         total_images=total_images,
@@ -744,7 +746,7 @@ def get_role_stats(role_id: int) -> Optional[StatsResponse]:
     completed_pass = stats["completed_pass"] or 0
     completed_fail = stats["completed_fail"] or 0
     completed_disputed = 0
-    progress_percent = (total_reviews / (total_images * REQUIRED_VOTES) * 100) if total_images > 0 else 0
+    progress_percent = (completed_images / total_images * 100) if total_images > 0 else 0
     
     return StatsResponse(
         total_images=total_images,
