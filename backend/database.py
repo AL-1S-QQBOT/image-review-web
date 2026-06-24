@@ -127,10 +127,10 @@ def migrate_add_credibility():
 
 def update_all_credibility(required_weight=4.0, default_credibility=None):
     """全量重新计算所有用户可信度（加权投票）
-    先根据当前信用分找出已完成图片，清空后重新计算，
-    避免在无已完成图片时误清空用户信用分。
+    同时检测权重 >= required_weight 或 投票数 >= REQUIRED_VOTES 的图片，
+    统一用权重方式计算共识。
     """
-    from backend.services import DEFAULT_CREDIBILITY, log_message
+    from backend.services import DEFAULT_CREDIBILITY, log_message, REQUIRED_VOTES
 
     if default_credibility is None:
         default_credibility = DEFAULT_CREDIBILITY
@@ -138,7 +138,13 @@ def update_all_credibility(required_weight=4.0, default_credibility=None):
     conn = get_db()
     cursor = conn.cursor()
 
-    # 一次查询找出所有完成图片，空则直接返回
+    # 先给所有空信用分的用户设置默认值
+    cursor.execute(
+        "UPDATE users SET credibility_score = ? WHERE credibility_score IS NULL",
+        (default_credibility,)
+    )
+
+    # 找权重 >= required_weight 或 投票数 >= REQUIRED_VOTES 的图片
     cursor.execute('''
         SELECT r.image_id
         FROM reviews r
@@ -146,17 +152,17 @@ def update_all_credibility(required_weight=4.0, default_credibility=None):
         WHERE r.status IN ('pass', 'fail')
         GROUP BY r.image_id
         HAVING COALESCE(SUM(COALESCE(u.credibility_score, ?)), 0) >= ?
-    ''', (default_credibility, required_weight))
+            OR COUNT(*) >= ?
+    ''', (default_credibility, required_weight, REQUIRED_VOTES))
     completed_ids = [row[0] for row in cursor.fetchall()]
 
     if not completed_ids:
-        log_message("全量可信度重算：无已完成图片，跳过（现有信用分保持不变）")
+        log_message("全量可信度重算：无完成图片，仅设置默认信用分")
+        conn.commit()
         conn.close()
         return
 
-    # 初始化所有用户
-    cursor.execute("UPDATE users SET credibility_score = NULL, credibility_agrees = 0, credibility_total = 0")
-
+    # 用权重方式计算共识
     for image_id in completed_ids:
         cursor.execute('''
             SELECT r.user_id, r.status, COALESCE(u.credibility_score, ?)
@@ -165,9 +171,6 @@ def update_all_credibility(required_weight=4.0, default_credibility=None):
             WHERE r.image_id = ? AND r.status IN ('pass', 'fail')
         ''', (default_credibility, image_id,))
         rows = cursor.fetchall()
-
-        if len(set(r[0] for r in rows)) < 2:
-            continue
 
         w_pass = sum(r[2] for r in rows if r[1] == 'pass')
         w_fail = sum(r[2] for r in rows if r[1] == 'fail')
