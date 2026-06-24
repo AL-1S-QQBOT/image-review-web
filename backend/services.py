@@ -561,6 +561,12 @@ def submit_review(image_id: int, user_id: str, status: str):
             "UPDATE users SET credibility_agrees = ?, credibility_total = ?, credibility_score = ? WHERE id = ?",
             (agrees, total, new_score, user_id)
         )
+    else:
+        # 无完成图片时，给尚无信用分的用户一个默认值，避免前台显示 NULL
+        cursor.execute(
+            "UPDATE users SET credibility_score = ? WHERE id = ? AND credibility_score IS NULL",
+            (DEFAULT_CREDIBILITY, user_id)
+        )
 
     conn.commit()
     conn.close()
